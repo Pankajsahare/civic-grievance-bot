@@ -1,0 +1,5 @@
+google-genai
+requests
+gspread
+google-auth
+flask
