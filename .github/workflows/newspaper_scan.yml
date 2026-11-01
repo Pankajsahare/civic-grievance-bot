@@ -1,0 +1,35 @@
+name: Daily Newspaper Grievance Scanner
+
+on:
+  schedule:
+    - cron: '0 6 * * *' # दररोज सकाळी ६:०० वाजता (IST) स्वयंचलितपणे रन होईल
+  workflow_dispatch:
+
+jobs:
+  scan-news:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: pip install google-genai requests gspread google-auth
+
+      - name: Run Scanner
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+        run: python newspaper_monitor.py
+      
+      - name: Commit State Changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Update processed issues state"
+          file_pattern: sent_issues.json
