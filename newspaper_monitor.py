@@ -15,7 +15,7 @@ from google.genai import types
 # ----------------------------
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 # जर GEMINI_MODEL रिकामे असेल तर आपोआप 'gemini-2.5-flash' वापरले जाईल
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL") or "gemini-2.5-flash"
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL") or "gemini-3.8-flash"
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GOOGLE_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON")
