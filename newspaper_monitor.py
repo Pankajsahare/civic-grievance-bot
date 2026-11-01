@@ -13,6 +13,8 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 SPREADSHEET_NAME = "Civic Grievances Tracker"
 STATE_FILE = "sent_issues.json"
+MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+
 
 def get_sheet():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
@@ -29,10 +31,12 @@ def get_sheet():
         sheet.append_row(["Date", "Problem", "Authority", "Social Handles", "Drafted Message", "Status"])
     return sheet
 
+
 def log_to_sheet(date_str, problem, authority, handles, message, status="Pending Approval"):
     sheet = get_sheet()
     if sheet:
         sheet.append_row([date_str, problem, authority, handles, message, status])
+
 
 def load_sent_hashes():
     if os.path.exists(STATE_FILE):
@@ -40,11 +44,13 @@ def load_sent_hashes():
             return set(json.load(f))
     return set()
 
+
 def save_sent_hash(issue_hash):
     sent = load_sent_hashes()
     sent.add(issue_hash)
     with open(STATE_FILE, "w") as f:
         json.dump(list(sent), f)
+
 
 def send_telegram_alert(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -60,12 +66,13 @@ def send_telegram_alert(message):
         ]
     }
     payload = {
-        "chat_id": TELEGRAM_CHAT_ID, 
-        "text": message, 
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
         "parse_mode": "Markdown",
         "reply_markup": json.dumps(keyboard)
     }
     requests.post(url, json=payload)
+
 
 def analyze_and_notify():
     sample_news = "Nagpur Municipal Corporation fails to repair massive potholes near Bhande Square causing severe traffic jams."
@@ -84,13 +91,13 @@ def analyze_and_notify():
     Input Text:
     {sample_news}
     """
-    
+
     response = client.models.generate_content(
-        model='gemini-3.8-flash',
+        model=MODEL_NAME,
         contents=prompt,
         config=types.GenerateContentConfig(
             temperature=0.2,
-            response_mime_type="JSON",
+            response_mime_type="application/json",
             response_schema={
                 "type": "OBJECT",
                 "properties": {
@@ -103,7 +110,7 @@ def analyze_and_notify():
             }
         )
     )
-    
+
     data = json.loads(response.text)
     formatted_msg = (
         f"🚨 *Civic Issue Detected*\n\n"
@@ -111,11 +118,12 @@ def analyze_and_notify():
         f"*Authority:* {data['authority']} ({data['social_handles']})\n\n"
         f"*Drafted Message:*\n{data['drafted_message']}"
     )
-    
+
     current_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_to_sheet(current_date, data['problem'], data['authority'], data['social_handles'], data['drafted_message'])
     send_telegram_alert(formatted_msg)
     save_sent_hash(issue_hash)
+
 
 if __name__ == "__main__":
     analyze_and_notify()
