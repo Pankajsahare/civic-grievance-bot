@@ -1,0 +1,191 @@
+/**
+ * Telegram Approve/Reject webhook — Google Apps Script आवृत्ती.
+ *
+ * हे sheet च्याच आत चालतं, त्यामुळे service-account JSON ची गरजच नाही.
+ * Render किंवा दुसऱ्या कोणत्याही hosting ची आवश्यकता नाही.
+ *
+ * सुरुवात करण्यासाठी: setup() एकदा चालवा, मग Deploy → New deployment →
+ * Web app (Execute as: Me, Who has access: Anyone), मग setWebhookNow() चालवा.
+ */
+
+// Sheet मधले column क्रमांक (A = 1)
+var STATUS_COLUMN = 6;
+var ISSUE_ID_COLUMN = 7;
+var ACTION_BY_COLUMN = 10;
+var ACTION_AT_COLUMN = 11;
+
+// मंजुरी म्हणजे मसुदा तयार - प्रत्यक्ष पाठवणी अजून हाताने करायची आहे
+var STATUS_BY_ACTION = {
+  approve: 'Approved - Manual Submission Required',
+  reject: 'Rejected'
+};
+
+function props_() {
+  return PropertiesService.getScriptProperties();
+}
+
+function telegramApi_(method, payload) {
+  var token = props_().getProperty('TELEGRAM_BOT_TOKEN');
+  try {
+    UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/' + method, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+  } catch (err) {
+    console.error(method + ' failed: ' + err);
+  }
+}
+
+/**
+ * IssueID वरून नेमकी ओळ शोधून Status + कोणी/केव्हा नोंदवतो.
+ * फक्त IssueID column मध्ये शोधतो, म्हणजे दुसऱ्या column मधला
+ * योगायोगाने जुळणारा मजकूर चुकून पकडला जात नाही.
+ */
+function recordDecision_(issueHash, statusText, actor) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return false;
+
+  var ids = sheet.getRange(2, ISSUE_ID_COLUMN, lastRow - 1, 1).getValues();
+  for (var i = 0; i < ids.length; i++) {
+    if (String(ids[i][0]).trim() === issueHash) {
+      var row = i + 2;
+      var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
+      sheet.getRange(row, STATUS_COLUMN).setValue(statusText);
+      sheet.getRange(row, ACTION_BY_COLUMN).setValue(actor);
+      sheet.getRange(row, ACTION_AT_COLUMN).setValue(stamp);
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Apps Script ला request headers मिळत नाहीत, म्हणून गुपित URL मध्ये ठेवलं आहे. */
+function doPost(e) {
+  // ContentService वापरल्यास Telegram ला 302 मिळतो आणि updates अडकतात
+  var ok = HtmlService.createHtmlOutput('ok');
+
+  try {
+    var expected = props_().getProperty('WEBHOOK_SECRET');
+    if (expected && (!e || !e.parameter || e.parameter.s !== expected)) {
+      console.warn('Rejected request: bad or missing secret.');
+      return ok;
+    }
+
+    var update = JSON.parse(e.postData.contents);
+    var callback = update.callback_query;
+    if (!callback) return ok;
+
+    var message = callback.message || {};
+    var chatId = String((message.chat || {}).id || '');
+    var allowedChat = props_().getProperty('TELEGRAM_CHAT_ID');
+
+    // फक्त ठरलेल्या chat मधूनच कृती स्वीकारतो
+    if (allowedChat && chatId !== String(allowedChat)) {
+      console.warn('Rejected callback from unauthorised chat: ' + chatId);
+      telegramApi_('answerCallbackQuery', {
+        callback_query_id: callback.id, text: 'Not authorised.'
+      });
+      return ok;
+    }
+
+    var parts = String(callback.data || '').split(':');
+    var action = parts[0];
+    var issueHash = parts.slice(1).join(':');
+
+    // अवैध कृती नाकारतो - approve नसलेली कोणतीही कृती Rejected ठरवत नाही
+    if (!STATUS_BY_ACTION.hasOwnProperty(action) || !issueHash) {
+      telegramApi_('answerCallbackQuery', {
+        callback_query_id: callback.id, text: 'Unknown action.'
+      });
+      return ok;
+    }
+
+    var from = callback.from || {};
+    var actor = from.username || String(from.id || 'unknown');
+    var statusText = STATUS_BY_ACTION[action];
+    var recorded = recordDecision_(issueHash, statusText, actor);
+
+    telegramApi_('answerCallbackQuery', {
+      callback_query_id: callback.id,
+      text: recorded ? statusText : 'Entry not found in the sheet.'
+    });
+
+    if (recorded) {
+      telegramApi_('editMessageText', {
+        chat_id: chatId,
+        message_id: message.message_id,
+        text: (message.text || '') + '\n\nStatus: ' + statusText + '\nBy: ' + actor
+      });
+    }
+  } catch (err) {
+    // काहीही चुकलं तरी Telegram ला 200 परत देतो, नाहीतर तो पुन्हा पुन्हा पाठवत राहील
+    console.error('Webhook processing failed: ' + err);
+  }
+
+  return ok;
+}
+
+/** ब्राउझरमध्ये URL उघडून deployment जिवंत आहे का तपासण्यासाठी. */
+function doGet() {
+  return HtmlService.createHtmlOutput('Civic grievance webhook is running.');
+}
+
+// ---------------------------------------------------------------
+// एकदाच चालवायची setup — खालची तीन मूल्यं भरा, मग setup() चालवा
+// ---------------------------------------------------------------
+function setup() {
+  var BOT_TOKEN = 'PASTE_YOUR_BOT_TOKEN_HERE';   // ← येथे बदला
+  var CHAT_ID = 'PASTE_YOUR_CHAT_ID_HERE';       // ← येथे बदला
+
+  if (BOT_TOKEN.indexOf('PASTE_') === 0 || CHAT_ID.indexOf('PASTE_') === 0) {
+    throw new Error('Fill in BOT_TOKEN and CHAT_ID inside setup() first.');
+  }
+
+  // गुपित आपोआप तयार करतो - हाताने ठरवायची गरज नाही
+  var secret = Utilities.getUuid().replace(/-/g, '');
+  props_().setProperties({
+    TELEGRAM_BOT_TOKEN: BOT_TOKEN,
+    TELEGRAM_CHAT_ID: String(CHAT_ID),
+    WEBHOOK_SECRET: secret
+  }, true);
+
+  console.log('Saved. Now deploy as a web app, then run setWebhookNow().');
+}
+
+/** Deploy केल्यानंतर हे चालवा - webhook आपोआप नोंदवलं जाईल. */
+function setWebhookNow() {
+  var token = props_().getProperty('TELEGRAM_BOT_TOKEN');
+  var secret = props_().getProperty('WEBHOOK_SECRET');
+  if (!token || !secret) throw new Error('Run setup() first.');
+
+  var url = ScriptApp.getService().getUrl();
+  if (!url) throw new Error('Deploy as a web app first (Deploy → New deployment).');
+
+  var response = UrlFetchApp.fetch(
+    'https://api.telegram.org/bot' + token + '/setWebhook',
+    {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({
+        url: url + '?s=' + secret,
+        allowed_updates: ['callback_query'],
+        drop_pending_updates: true
+      }),
+      muteHttpExceptions: true
+    }
+  );
+  console.log(response.getContentText());
+}
+
+/** काही चुकल्यास Telegram काय म्हणतोय ते बघण्यासाठी. */
+function checkWebhook() {
+  var token = props_().getProperty('TELEGRAM_BOT_TOKEN');
+  var response = UrlFetchApp.fetch(
+    'https://api.telegram.org/bot' + token + '/getWebhookInfo',
+    { muteHttpExceptions: true }
+  );
+  console.log(response.getContentText());
+}
