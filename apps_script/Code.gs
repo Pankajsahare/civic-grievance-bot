@@ -282,3 +282,140 @@ function testWebhookReachable() {
     console.log('VERDICT: unexpected response - send both lines above.');
   }
 }
+
+// ---------------------------------------------------------------
+// Alerts पाठवणारा bot जोडणे — एकदाच चालवा (पुन्हा चालवलं तरी सुरक्षित)
+// ---------------------------------------------------------------
+
+/**
+ * GitHub मधले alerts @civic_grievance_bot पाठवतो, पण webhook दुसऱ्याच bot वर लागला होता.
+ * हे function: token तपासतं → alerts चा chat आपोआप शोधतं → आधी दाबलेली बटणं sheet मध्ये
+ * नोंदवतं → त्याच bot वर webhook लावतं → Telegram वर खात्रीचा संदेश पाठवतं.
+ * Deploy पुन्हा करायची गरज नाही: doPost ही settings प्रत्येक वेळी नव्याने वाचतं.
+ */
+function connectAlertBot() {
+  // TODO [मॅन्युअल बदल]: @civic_grievance_bot चा token
+  //   कुठे मिळेल: @BotFather → /mybots → @civic_grievance_bot → API Token ("Revoke" दाबू नका)
+  //   न बदलल्यास: "Paste the @civic_grievance_bot token" असा error येऊन थांबेल
+  var ALERT_BOT_TOKEN = 'PASTE_CIVIC_GRIEVANCE_BOT_TOKEN_HERE';  // ← येथे बदला
+
+  // GitHub secrets मधला bot — "Telegram Check" workflow ने ओळखला
+  var ALERT_BOT_ID = 9250003701;
+  var EXEC_URL = 'https://script.google.com/macros/s/AKfycby9PdYc7g3tqB9cTOixyyZEu8fwcNw8re3WOFQt4xK4EorgPFfvYDLOIeRF3l4EpMQj/exec';
+
+  var token = ALERT_BOT_TOKEN.trim();
+  if (token.indexOf('PASTE_') === 0) {
+    throw new Error('Paste the @civic_grievance_bot token into ALERT_BOT_TOKEN first.');
+  }
+
+  // 1. token नेमका alerts पाठवणाऱ्या bot चाच आहे का
+  var me = alertBotCall_(token, 'getMe', {});
+  if (!me.ok) throw new Error('Telegram rejected this token: ' + me.description);
+  if (me.result.id !== ALERT_BOT_ID) {
+    throw new Error('This token belongs to @' + me.result.username +
+      '. Alerts come from @civic_grievance_bot - copy that bot\'s token instead.');
+  }
+  var botName = '@' + me.result.username;
+  console.log('STEP 1 OK - token belongs to ' + botName);
+
+  // 2. Telegram कडे अडकलेली बटणं वाचतो (webhook असताना getUpdates चालत नाही, म्हणून आधी काढतो)
+  alertBotCall_(token, 'deleteWebhook', { drop_pending_updates: false });
+  var got = alertBotCall_(token, 'getUpdates', { timeout: 0 });
+  var updates = (got.ok && got.result) || [];
+
+  var chatId = '';
+  var presses = [];
+  updates.forEach(function (u) {
+    var cq = u.callback_query;
+    if (cq && cq.message && cq.message.chat) {
+      chatId = String(cq.message.chat.id);   // alert वरचं बटण = नेमका alerts चा chat
+      presses.push(cq);
+    } else if (!chatId && u.message && u.message.chat && u.message.chat.type === 'private') {
+      chatId = String(u.message.chat.id);
+    }
+  });
+
+  // पुन्हा चालवल्यास अडकलेले updates नसतात - तेव्हा आधी साठवलेला chat तपासून वापरतो
+  if (!chatId) {
+    var savedChat = props_().getProperty('TELEGRAM_CHAT_ID');
+    if (savedChat && alertBotCall_(token, 'getChat', { chat_id: savedChat }).ok) chatId = savedChat;
+  }
+  if (!chatId) {
+    console.log('STEP 2 WAITING - could not find the alerts chat yet.');
+    console.log('In Telegram, open ' + botName + ' in the chat where alerts arrive, send "hi", ' +
+      'then run connectAlertBot again.');
+    return;
+  }
+  var chat = alertBotCall_(token, 'getChat', { chat_id: chatId });
+  var chatName = chat.ok ? (chat.result.title || chat.result.first_name || '') : '';
+  console.log('STEP 2 OK - alerts chat "' + chatName + '"; ' + presses.length +
+    ' earlier button press(es) waiting.');
+
+  // वाचलेले updates Telegram कडून काढून टाकतो, म्हणजे ते पुन्हा येणार नाहीत
+  if (updates.length) {
+    alertBotCall_(token, 'getUpdates', {
+      offset: updates[updates.length - 1].update_id + 1, timeout: 0
+    });
+  }
+
+  // 3. आधी दाबलेली बटणं sheet मध्ये नोंदवतो (एकाच alert वर दोनदा दाबलं असल्यास शेवटचं ग्राह्य)
+  presses.forEach(function (cq) {
+    if (String(cq.message.chat.id) !== chatId) return;
+    var parts = String(cq.data || '').split(':');
+    var action = parts[0];
+    var issueHash = parts.slice(1).join(':');
+    if (!STATUS_BY_ACTION.hasOwnProperty(action) || !issueHash) return;
+    var from = cq.from || {};
+    var actor = from.username || String(from.id || 'unknown');
+    var stored = recordDecision_(issueHash, STATUS_BY_ACTION[action], actor);
+    console.log('   ' + action + ' ' + issueHash.slice(0, 8) +
+      (stored ? ' -> saved in sheet' : ' -> row not found'));
+  });
+  console.log('STEP 3 OK - earlier button presses processed.');
+
+  // 4. दुसऱ्या bot वरचा याच script चा webhook काढतो, settings साठवतो, योग्य bot वर webhook लावतो
+  var p = props_();
+  var oldToken = p.getProperty('TELEGRAM_BOT_TOKEN');
+  if (oldToken && oldToken !== token) {
+    var oldHook = alertBotCall_(oldToken, 'getWebhookInfo', {});
+    if (oldHook.ok && String(oldHook.result.url || '').indexOf(EXEC_URL) === 0) {
+      alertBotCall_(oldToken, 'deleteWebhook', { drop_pending_updates: true });
+      console.log('   removed this script\'s webhook from the other bot.');
+    }
+  }
+
+  var secret = p.getProperty('WEBHOOK_SECRET') || Utilities.getUuid().replace(/-/g, '');
+  p.setProperties({ TELEGRAM_BOT_TOKEN: token, TELEGRAM_CHAT_ID: chatId, WEBHOOK_SECRET: secret });
+
+  var hook = alertBotCall_(token, 'setWebhook', {
+    url: EXEC_URL + '?s=' + secret,
+    allowed_updates: ['callback_query'],
+    drop_pending_updates: false
+  });
+  if (!hook.ok) throw new Error('setWebhook failed: ' + hook.description);
+  console.log('STEP 4 OK - buttons of ' + botName + ' now reach this script.');
+
+  // 5. खात्रीचा संदेश - हा पोहोचला म्हणजे token आणि chat दोन्ही बरोबर
+  var sent = alertBotCall_(token, 'sendMessage', {
+    chat_id: chatId,
+    text: '✅ Approve/Reject buttons are now connected to the Google Sheet.'
+  });
+  console.log(sent.ok
+    ? 'DONE - press Approve or Reject on any alert in Telegram.'
+    : 'Webhook is set, but the confirmation message failed: ' + sent.description);
+}
+
+/** Telegram API call करून उत्तर (त्रुटी असली तरी) JSON म्हणून परत देतो. */
+function alertBotCall_(token, method, payload) {
+  var res = UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/' + method, {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(payload || {}),
+    muteHttpExceptions: true
+  });
+  try {
+    return JSON.parse(res.getContentText());
+  } catch (err) {
+    return { ok: false, description: 'HTTP ' + res.getResponseCode() };
+  }
+}
