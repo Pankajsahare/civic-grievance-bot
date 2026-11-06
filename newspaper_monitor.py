@@ -458,8 +458,24 @@ def generate_grievance_payload(news_text):
     return payload
 
 
+# Gemini "yes" म्हणूनही मजकुरात "तक्रार नाही" असं लिहितो - अशा मसुद्यांची दुसरी तपासणी
+NO_GRIEVANCE_MARKERS = (
+    "not applicable",
+    "no civic",
+    "no grievance",
+    "no public problem",
+    "no issue",
+)
+
+
 def is_grievance(data):
-    return str(data.get("is_civic_grievance", "")).strip().lower() in ("yes", "true")
+    if str(data.get("is_civic_grievance", "")).strip().lower() not in ("yes", "true"):
+        return False
+    for field in ("problem", "drafted_message"):
+        text = str(data.get(field, "")).strip().lower()
+        if text.startswith(NO_GRIEVANCE_MARKERS):
+            return False
+    return True
 
 
 def build_message(data, level, source_url):

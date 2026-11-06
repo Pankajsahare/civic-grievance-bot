@@ -118,11 +118,17 @@ function doPost(e) {
     });
 
     if (recorded) {
-      telegramApi_('editMessageText', {
+      // Approve/Reject बटणं काढतो, पण X/WhatsApp share (url) बटणं ठेवतो
+      var rows = ((message.reply_markup || {}).inline_keyboard || []).filter(function (row) {
+        return row.every(function (b) { return !!b.url; });
+      });
+      var edit = {
         chat_id: chatId,
         message_id: message.message_id,
         text: (message.text || '') + '\n\nStatus: ' + statusText + '\nBy: ' + actor
-      });
+      };
+      if (rows.length) edit.reply_markup = { inline_keyboard: rows };
+      telegramApi_('editMessageText', edit);
     }
   } catch (err) {
     // काहीही चुकलं तरी Telegram ला 200 परत देतो, नाहीतर तो पुन्हा पुन्हा पाठवत राहील
