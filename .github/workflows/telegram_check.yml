@@ -1,0 +1,68 @@
+name: Telegram Check
+
+# निदानासाठी फक्त हाताने चालवायचा workflow - काहीही बदलत नाही, गुपितं छापत नाही
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect bot, chat and webhook
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          from datetime import datetime, timedelta, timezone
+
+          token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+          chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+
+
+          def call(method, **params):
+              """Telegram API ला call करून JSON उत्तर परत देतो (त्रुटी असली तरी)."""
+              url = f"https://api.telegram.org/bot{token}/{method}"
+              data = urllib.parse.urlencode(params).encode() if params else None
+              try:
+                  with urllib.request.urlopen(url, data=data, timeout=20) as resp:
+                      return json.load(resp)
+              except urllib.error.HTTPError as err:
+                  return json.load(err)
+
+
+          # 1. alerts पाठवणारा bot कोणता
+          me = call("getMe").get("result", {})
+          print(f"BOT_USERNAME: @{me.get('username')}")
+          print(f"BOT_ID: {me.get('id')}")
+
+          # 2. alerts कोणत्या chat मध्ये जातात (ID न छापता त्याचं स्वरूप)
+          chat = call("getChat", chat_id=chat_id)
+          info = chat.get("result", {})
+          print(f"CHAT_LOOKUP_OK: {chat.get('ok')} {chat.get('description', '')}")
+          print(f"CHAT_TYPE: {info.get('type')}")
+          print(f"CHAT_NAME: {info.get('title') or info.get('first_name')}")
+          print(f"CHAT_ID_IS_USER_ID: {chat_id == '320999241'}")
+          print(f"CHAT_ID_NEGATIVE: {chat_id.startswith('-')}  DIGITS: {len(chat_id.lstrip('-'))}")
+
+          # 3. या bot चा webhook कुठे जातो आणि Telegram ला काही त्रुटी दिसली का
+          hook = call("getWebhookInfo").get("result", {})
+          url = hook.get("url", "")
+          print(f"WEBHOOK_URL: {url.split('?')[0] if url else '(none)'}")
+          print(f"WEBHOOK_HAS_SECRET: {'?s=' in url}")
+          print(f"PENDING_UPDATES: {hook.get('pending_update_count')}")
+          when = hook.get("last_error_date")
+          if when:
+              ist = datetime.fromtimestamp(when, timezone(timedelta(hours=5, minutes=30)))
+              print(f"LAST_ERROR_AT_IST: {ist:%Y-%m-%d %H:%M}")
+          print(f"LAST_ERROR: {hook.get('last_error_message', '(none)')}")
+          print(f"ALLOWED_UPDATES: {hook.get('allowed_updates')}")
+          PY
