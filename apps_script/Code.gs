@@ -155,14 +155,29 @@ function setup() {
   console.log('Saved. Now deploy as a web app, then run setWebhookNow().');
 }
 
-/** Deploy केल्यानंतर हे चालवा - webhook आपोआप नोंदवलं जाईल. */
+/**
+ * Deploy केल्यानंतर हे चालवा.
+ *
+ * खाली तुमची Web app URL टाका (Deploy → Manage deployments मध्ये दिसते).
+ * ती /exec ने संपली पाहिजे. editor मधून चालवल्यास ScriptApp.getService().getUrl()
+ * खाजगी /dev URL देतो - तिथे Telegram पोहोचू शकत नाही, म्हणून ती चालत नाही.
+ */
 function setWebhookNow() {
+  var WEB_APP_URL = 'PASTE_YOUR_EXEC_URL_HERE';   // ← येथे बदला
+
   var token = props_().getProperty('TELEGRAM_BOT_TOKEN');
   var secret = props_().getProperty('WEBHOOK_SECRET');
   if (!token || !secret) throw new Error('Run setup() first.');
 
-  var url = ScriptApp.getService().getUrl();
-  if (!url) throw new Error('Deploy as a web app first (Deploy → New deployment).');
+  var url = WEB_APP_URL.indexOf('PASTE_') === 0 ? ScriptApp.getService().getUrl() : WEB_APP_URL.trim();
+
+  if (!url || url.slice(-5) !== '/exec') {
+    throw new Error(
+      'Need the public /exec URL, got: ' + (url || 'nothing') +
+      ' — open Deploy → Manage deployments, copy the Web app URL (it ends in /exec) ' +
+      'and paste it into WEB_APP_URL at the top of this function.'
+    );
+  }
 
   var response = UrlFetchApp.fetch(
     'https://api.telegram.org/bot' + token + '/setWebhook',
