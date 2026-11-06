@@ -167,7 +167,7 @@ function setup() {
  * खाजगी /dev URL देतो - तिथे Telegram पोहोचू शकत नाही, म्हणून ती चालत नाही.
  */
 function setWebhookNow() {
-  var WEB_APP_URL = 'PASTE_YOUR_EXEC_URL_HERE';   // ← येथे बदला
+  var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycby9PdYc7g3tqB9cTOixyyZEu8fwcNw8re3WOFQt4xK4EorgPFfvYDLOIeRF3l4EpMQj/exec';
 
   var token = props_().getProperty('TELEGRAM_BOT_TOKEN');
   var secret = props_().getProperty('WEBHOOK_SECRET');
@@ -238,4 +238,47 @@ function checkSettings() {
   console.log('TELEGRAM_BOT_TOKEN: ' + (p.TELEGRAM_BOT_TOKEN ? 'set' : 'MISSING'));
   console.log('TELEGRAM_CHAT_ID: ' + (p.TELEGRAM_CHAT_ID || 'MISSING'));
   console.log('WEBHOOK_SECRET: ' + (p.WEBHOOK_SECRET ? 'set' : 'MISSING'));
+}
+/**
+ * निदान: deployed web app खरंच बाहेरून पोहोचतो का ते तपासतो.
+ * editor मधून चालतं पण deployed आवृत्तीला call करतं, त्यामुळे खरी स्थिती कळते.
+ * Sheet मध्ये काहीही बदलत नाही (कृती 'noop' आहे, ती नाकारली जाते).
+ */
+function testWebhookReachable() {
+  var EXEC_URL = 'https://script.google.com/macros/s/AKfycby9PdYc7g3tqB9cTOixyyZEu8fwcNw8re3WOFQt4xK4EorgPFfvYDLOIeRF3l4EpMQj/exec';
+
+  var p = PropertiesService.getScriptProperties();
+  var secret = p.getProperty('WEBHOOK_SECRET');
+  var chatId = p.getProperty('TELEGRAM_CHAT_ID');
+
+  var fakeUpdate = {
+    callback_query: {
+      id: 'selftest',
+      data: 'noop:selftest',
+      from: { username: 'self-test' },
+      message: { message_id: 1, text: 'self test', chat: { id: chatId } }
+    }
+  };
+
+  var res = UrlFetchApp.fetch(EXEC_URL + '?s=' + secret, {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(fakeUpdate),
+    muteHttpExceptions: true,
+    followRedirects: false          // 302 लपवू नये म्हणून
+  });
+
+  var code = res.getResponseCode();
+  var body = res.getContentText().slice(0, 200);
+
+  console.log('HTTP ' + code);
+  console.log('BODY: ' + body);
+
+  if (code === 200 && body.indexOf('ok') !== -1) {
+    console.log('VERDICT: web app is reachable. Problem is on the Telegram side.');
+  } else if (code === 302 || code === 401 || code === 403 || body.indexOf('ServiceLogin') !== -1) {
+    console.log('VERDICT: deployment is private. Set "Who has access" to Anyone.');
+  } else {
+    console.log('VERDICT: unexpected response - send both lines above.');
+  }
 }
