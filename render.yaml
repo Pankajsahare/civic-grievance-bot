@@ -12,7 +12,9 @@ services:
         sync: false
       - key: TELEGRAM_CHAT_ID
         sync: false
+      # generateValue वापरू नका - Render base64 किंमत बनवतो आणि त्यात + / =
+      # येतात, जे Telegram चा secret_token स्वीकारत नाही (फक्त A-Z a-z 0-9 _ -)
       - key: TELEGRAM_WEBHOOK_SECRET
-        generateValue: true
+        sync: false
       - key: GOOGLE_CREDENTIALS_JSON
         sync: false
