@@ -6,7 +6,7 @@ permissions:
 
 on:
   schedule:
-    - cron: '0 6 * * *'
+    - cron: '0 3 * * *'   # 08:30 IST - सकाळची वृत्तपत्रं आल्यानंतर
   workflow_dispatch:
 
 # Scheduled आणि manual run एकाच वेळी चालून state file बिघडू नये
@@ -40,6 +40,8 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
           ARTICLES_PER_LEVEL: ${{ vars.ARTICLES_PER_LEVEL }}
+          SIMILARITY_THRESHOLD: ${{ vars.SIMILARITY_THRESHOLD }}
+          CONTACT_EMAIL: ${{ vars.CONTACT_EMAIL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}

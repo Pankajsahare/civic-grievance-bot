@@ -1,0 +1,18 @@
+# Render.com वर webhook_server मोफत deploy करण्यासाठी blueprint
+services:
+  - type: web
+    name: civic-grievance-webhook
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn webhook_server:app
+    healthCheckPath: /health
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        generateValue: true
+      - key: GOOGLE_CREDENTIALS_JSON
+        sync: false
