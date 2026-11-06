@@ -8,6 +8,10 @@
  * Web app (Execute as: Me, Who has access: Anyone), मग setWebhookNow() चालवा.
  */
 
+// तुमच्या sheet चा ID (URL मधला /d/ ... /edit मधला भाग)
+// openById वापरल्याने script sheet च्या आत असो वा वेगळा, दोन्ही ठिकाणी चालतो
+var SPREADSHEET_ID = '1OBpuiiXczHdvL3Tc8vSvgRwdnLuzbw3ZVchy50FZNwI';
+
 // Sheet मधले column क्रमांक (A = 1)
 var STATUS_COLUMN = 6;
 var ISSUE_ID_COLUMN = 7;
@@ -44,7 +48,7 @@ function telegramApi_(method, payload) {
  * योगायोगाने जुळणारा मजकूर चुकून पकडला जात नाही.
  */
 function recordDecision_(issueHash, statusText, actor) {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
+  var sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheets()[0];
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return false;
 
@@ -203,4 +207,35 @@ function checkWebhook() {
     { muteHttpExceptions: true }
   );
   console.log(response.getContentText());
+}
+
+
+/**
+ * निदानासाठी: Telegram न वापरता थेट sheet मध्ये लिहून बघतो.
+ * हे चालल्यास अडचण Telegram-कडे आहे; अयशस्वी झाल्यास sheet-कडे.
+ */
+function testSheetAccess() {
+  var sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheets()[0];
+  var lastRow = sheet.getLastRow();
+  console.log('Sheet opened: "' + sheet.getName() + '", rows: ' + lastRow);
+
+  if (lastRow < 2) {
+    console.log('No data rows to test against.');
+    return;
+  }
+  var firstId = String(sheet.getRange(2, ISSUE_ID_COLUMN).getValue()).trim();
+  console.log('First IssueID: ' + firstId);
+
+  var ok = recordDecision_(firstId, 'TEST - please ignore', 'self-test');
+  console.log(ok ? 'WRITE OK - row 2 updated. Sheet access works.'
+                 : 'WRITE FAILED - IssueID not found.');
+  console.log('Now set row 2 Status back to "Pending Approval" by hand.');
+}
+
+/** Script Properties नीट साठवले आहेत का ते बघण्यासाठी (गुपितं दाखवत नाही). */
+function checkSettings() {
+  var p = props_().getProperties();
+  console.log('TELEGRAM_BOT_TOKEN: ' + (p.TELEGRAM_BOT_TOKEN ? 'set' : 'MISSING'));
+  console.log('TELEGRAM_CHAT_ID: ' + (p.TELEGRAM_CHAT_ID || 'MISSING'));
+  console.log('WEBHOOK_SECRET: ' + (p.WEBHOOK_SECRET ? 'set' : 'MISSING'));
 }
