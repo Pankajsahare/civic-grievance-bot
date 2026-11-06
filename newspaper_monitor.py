@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import re
 import time
 import traceback
 from datetime import datetime
@@ -18,9 +19,10 @@ from google.oauth2.service_account import Credentials
 # Environment configuration
 # ----------------------------
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-# GEMINI_MODEL रिकामे असल्यास खालचा default वापरला जातो
-DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+# Free tier कोटा: flash-lite ला 10 RPM / 500 RPD, तर 3.8-flash ला फक्त 5 RPM / ~20 RPD.
+# त्यामुळे flash-lite पहिला; तो बंद झाल्यास (404) पुढचा आपोआप वापरला जातो.
+DEFAULT_GEMINI_MODELS = "gemini-3.5-flash-lite,gemini-3.8-flash"
+GEMINI_MODELS = [m.strip() for m in (os.environ.get("GEMINI_MODEL") or DEFAULT_GEMINI_MODELS).split(",") if m.strip()]
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GOOGLE_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON")
@@ -28,7 +30,13 @@ GOOGLE_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON")
 SPREADSHEET_NAME = "Civic Grievances Tracker"
 STATE_FILE = "sent_issues.json"
 ARTICLES_PER_LEVEL = int(os.environ.get("ARTICLES_PER_LEVEL", "2"))
-GEMINI_MAX_ATTEMPTS = 2  # 503 (high demand) साठी एक पुनर्प्रयत्न
+GEMINI_MAX_ATTEMPTS = 4
+# दोन Gemini calls मध्ये किमान इतके सेकंद - free tier च्या per-minute मर्यादेत राहण्यासाठी
+GEMINI_MIN_INTERVAL = float(os.environ.get("GEMINI_MIN_INTERVAL", "7"))
+# या त्रुटी तात्पुरत्या आहेत - थांबून पुन्हा प्रयत्न करता येतो
+RETRYABLE_MARKERS = ("429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE", "500", "INTERNAL")
+# हा model उपलब्धच नाही - पुन्हा प्रयत्न निरुपयोगी, पुढचा model वापरावा
+MODEL_GONE_MARKERS = ("404", "NOT_FOUND", "no longer available")
 
 SHEET_HEADERS = [
     "Date", "Problem", "Authority", "Social Handles", "Drafted Message",
@@ -69,7 +77,7 @@ def validate_config():
     ) if not value]
     if missing:
         print(f"Missing configuration: {', '.join(missing)}")
-    print(f"Using Gemini model: {GEMINI_MODEL}")
+    print(f"Gemini models (in order): {', '.join(GEMINI_MODELS)}")
     return missing
 
 
@@ -297,6 +305,35 @@ From that data, identify:
 </news_data>"""
 
 
+_last_call_at = 0.0
+_dead_models = set()  # या run मध्ये 404 आलेले models पुन्हा वापरायचे नाहीत
+
+
+def throttle():
+    """Free tier ची per-minute मर्यादा ओलांडू नये म्हणून दोन calls मध्ये अंतर ठेवतो."""
+    global _last_call_at
+    wait = GEMINI_MIN_INTERVAL - (time.monotonic() - _last_call_at)
+    if wait > 0:
+        time.sleep(wait)
+    _last_call_at = time.monotonic()
+
+
+def suggested_delay(error_text, fallback):
+    """429 च्या उत्तरात Google स्वतः किती थांबायचं ते सांगतो - तेच पाळतो."""
+    for pattern in (r"retry in (\d+(?:\.\d+)?)s", r"retryDelay['\"]?:\s*['\"](\d+(?:\.\d+)?)s"):
+        match = re.search(pattern, error_text)
+        if match:
+            return float(match.group(1)) + 1.0
+    return fallback
+
+
+def active_models():
+    live = [m for m in GEMINI_MODELS if m not in _dead_models]
+    if not live:
+        raise RuntimeError(f"No usable Gemini model left (tried: {', '.join(GEMINI_MODELS)})")
+    return live
+
+
 def generate_grievance_payload(news_text):
     client = get_client()
     config = types.GenerateContentConfig(
@@ -309,20 +346,38 @@ def generate_grievance_payload(news_text):
         },
     )
 
+    response = None
     last_error = None
-    for attempt in range(1, GEMINI_MAX_ATTEMPTS + 1):
-        try:
-            response = client.models.generate_content(
-                model=GEMINI_MODEL, contents=build_prompt(news_text), config=config,
-            )
+
+    for model in active_models():
+        for attempt in range(1, GEMINI_MAX_ATTEMPTS + 1):
+            throttle()
+            try:
+                response = client.models.generate_content(
+                    model=model, contents=build_prompt(news_text), config=config,
+                )
+                break
+            except Exception as e:
+                last_error, text = e, str(e)
+
+                if any(m in text for m in MODEL_GONE_MARKERS):
+                    print(f"Model {model} unavailable; switching to the next one.")
+                    _dead_models.add(model)
+                    break
+
+                if any(m in text for m in RETRYABLE_MARKERS) and attempt < GEMINI_MAX_ATTEMPTS:
+                    delay = suggested_delay(text, fallback=5.0 * attempt)
+                    print(f"{model}: temporary error, waiting {delay:.0f}s (attempt {attempt}).")
+                    time.sleep(delay)
+                    continue
+
+                break  # पुन्हा प्रयत्न करण्यासारखं नाही - पुढचा model बघतो
+
+        if response is not None:
             break
-        except Exception as e:
-            last_error = e
-            # 503 = तात्पुरता overload; एकदा थांबून पुन्हा प्रयत्न
-            if "503" in str(e) and attempt < GEMINI_MAX_ATTEMPTS:
-                time.sleep(5)
-                continue
-            raise RuntimeError(f"Gemini API call failed: {e}") from last_error
+
+    if response is None:
+        raise RuntimeError(f"Gemini API call failed: {last_error}")
 
     try:
         payload = json.loads(response.text)
@@ -384,6 +439,8 @@ def analyze_and_notify():
 
     seen = set(state["completed"]) | set(state["pending_retry"])
     new_count = 0
+    attempted = 0
+    draft_failures = []
 
     for article in articles:
         # जुना text-hash सुद्धा तपासतो, नाहीतर आधीच पाठवलेल्या बातम्या पुन्हा जातील
@@ -391,11 +448,13 @@ def analyze_and_notify():
             continue
 
         level = article["level"]
+        attempted += 1
         try:
             data = generate_grievance_payload(article["text"])
         except Exception as e:
             # Gemini अयशस्वी -> hash जतन होत नाही, पुढच्या run मध्ये आपोआप पुन्हा प्रयत्न
             print(f"[{level}] Draft generation failed: {e}")
+            draft_failures.append(f"{level}: {str(e)[:120]}")
             continue
 
         message = build_message(data, level, article["source_url"])
@@ -415,8 +474,17 @@ def analyze_and_notify():
         seen.add(article["hash"])
 
     save_state(state)
+
+    # नवीन बातम्या होत्या पण एकही मसुदा तयार झाला नाही - हे गुपचूप जाऊ देत नाही
+    if attempted and not new_count:
+        notify_admin(
+            "draft generation",
+            f"All {attempted} new article(s) failed. First reasons: " + " | ".join(draft_failures[:3]),
+        )
+
     print(f"Processed {new_count} new issue(s) out of {len(articles)} fetched "
-          f"across {len(NEWS_LEVELS)} levels. Pending retry: {len(state['pending_retry'])}.")
+          f"across {len(NEWS_LEVELS)} levels ({attempted} new, {len(draft_failures)} draft failure(s)). "
+          f"Pending retry: {len(state['pending_retry'])}.")
 
 
 if __name__ == "__main__":
