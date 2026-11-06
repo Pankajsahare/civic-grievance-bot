@@ -3,6 +3,11 @@ name: Telegram Check
 # निदानासाठी फक्त हाताने चालवायचा workflow - काहीही बदलत नाही, गुपितं छापत नाही
 on:
   workflow_dispatch:
+    inputs:
+      test_issue_id:
+        description: 'Optional: IssueID to approve as a test press from the alerts chat'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -15,6 +20,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TEST_ISSUE_ID: ${{ inputs.test_issue_id }}
         run: |
           python3 - <<'PY'
           import json
@@ -65,4 +71,31 @@ jobs:
               print(f"LAST_ERROR_AT_IST: {ist:%Y-%m-%d %H:%M}")
           print(f"LAST_ERROR: {hook.get('last_error_message', '(none)')}")
           print(f"ALLOWED_UPDATES: {hook.get('allowed_updates')}")
+
+          # 4. (ऐच्छिक) alerts च्या chat मधून बटण दाबल्यासारखी चाचणी - ती ओळ sheet मध्ये बदलते
+          test_id = os.environ.get("TEST_ISSUE_ID", "").strip()
+          if test_id and not url:
+              print("SELFTEST: skipped - no webhook set")
+          elif test_id:
+              fake = {
+                  "update_id": 1,
+                  "callback_query": {
+                      "id": "selftest",
+                      "data": f"approve:{test_id}",
+                      "from": {"id": 0, "username": "selftest-from-github"},
+                      "message": {
+                          "message_id": 0,
+                          "text": "selftest",
+                          "chat": {"id": int(chat_id), "type": "private"},
+                      },
+                  },
+              }
+              req = urllib.request.Request(
+                  url, data=json.dumps(fake).encode(), headers={"Content-Type": "application/json"}
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as resp:
+                      print(f"SELFTEST_HTTP: {resp.status}")
+              except urllib.error.HTTPError as err:
+                  print(f"SELFTEST_HTTP: {err.code}")
           PY
