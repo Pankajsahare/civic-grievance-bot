@@ -31,16 +31,16 @@ GOOGLE_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON")
 
 SPREADSHEET_NAME = "Civic Grievances Tracker"
 STATE_FILE = "sent_issues.json"
-ARTICLES_PER_LEVEL = int(os.environ.get("ARTICLES_PER_LEVEL", "2"))
+ARTICLES_PER_LEVEL = int((os.environ.get("ARTICLES_PER_LEVEL") or "2"))
 GEMINI_MAX_ATTEMPTS = 4
 # दोन Gemini calls मध्ये किमान इतके सेकंद - free tier च्या per-minute मर्यादेत राहण्यासाठी
-GEMINI_MIN_INTERVAL = float(os.environ.get("GEMINI_MIN_INTERVAL", "7"))
+GEMINI_MIN_INTERVAL = float((os.environ.get("GEMINI_MIN_INTERVAL") or "7"))
 # या त्रुटी तात्पुरत्या आहेत - थांबून पुन्हा प्रयत्न करता येतो
 RETRYABLE_MARKERS = ("429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE", "500", "INTERNAL")
 # हा model उपलब्धच नाही - पुन्हा प्रयत्न निरुपयोगी, पुढचा model वापरावा
 MODEL_GONE_MARKERS = ("404", "NOT_FOUND", "no longer available")
 # दोन समस्या किती जुळल्या तर एकच मानायच्या (0 = काहीच नाही, 1 = तंतोतंत)
-SIMILARITY_THRESHOLD = float(os.environ.get("SIMILARITY_THRESHOLD", "0.62"))
+SIMILARITY_THRESHOLD = float((os.environ.get("SIMILARITY_THRESHOLD") or "0.62"))
 RECENT_MEMORY = 60  # तुलनेसाठी इतक्या अलीकडच्या समस्या लक्षात ठेवतो
 
 SHEET_HEADERS = [
@@ -48,7 +48,7 @@ SHEET_HEADERS = [
     "Status", "IssueID", "Level", "SourceURL", "ActionBy", "ActionAt",
 ]
 STATUS_PENDING = "Pending Approval"
-CONTACT_EMAIL = os.environ.get("CONTACT_EMAIL", "info@advisor4u.in")
+CONTACT_EMAIL = (os.environ.get("CONTACT_EMAIL") or "info@advisor4u.in")
 
 # बहु-स्तरीय बातम्या स्रोत - Google News RSS (मोफत, वेगळी API key नको)
 NEWS_LEVELS = {
