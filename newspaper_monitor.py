@@ -595,7 +595,8 @@ def analyze_and_notify():
     save_state(state)
 
     # नवीन बातम्या होत्या पण एकही मसुदा तयार झाला नाही - हे गुपचूप जाऊ देत नाही
-    if attempted and not new_count:
+    # फक्त Gemini खरंच अयशस्वी झाला तरच सूचना - सगळ्या बातम्या "तक्रार नाही" असल्यास नाही
+    if draft_failures and len(draft_failures) == attempted:
         notify_admin(
             "draft generation",
             f"All {attempted} new article(s) failed. First reasons: " + " | ".join(draft_failures[:3]),
